@@ -34,8 +34,21 @@ export class FileSystemHandler {
       const pngFiles = files
         .filter(file => /\.png$/i.test(file))
         .map(file => path.join(directory, file))
-      
+
       return pngFiles
+    } catch (error) {
+      throw new Error(`Error leyendo directorio ${directory}: ${error.message}`)
+    }
+  }
+
+  async findVideoFiles(directory) {
+    try {
+      const files = await fs.readdir(directory)
+      const videoFiles = files
+        .filter(file => /\.(mp4|avi|mov|mkv|webm|flv|wmv)$/i.test(file))
+        .map(file => path.join(directory, file))
+
+      return videoFiles
     } catch (error) {
       throw new Error(`Error leyendo directorio ${directory}: ${error.message}`)
     }
@@ -77,11 +90,25 @@ export class FileSystemHandler {
     return path.join(dir, `${baseName}.${newExtension}`)
   }
 
-  createVariantPath(inputPath, outputDirectory, format, variant) {
+  createOutputFilePath(inputPath, outputDirectory, format) {
     const baseName = path.basename(inputPath, path.extname(inputPath))
-    const suffix = variant.suffix === 'original' ? '' : `_${variant.suffix}`
-    const fileName = `${baseName}${suffix}.${format}`
-    return path.join(outputDirectory, fileName)
+    return path.join(outputDirectory, `${baseName}.${format}`)
+  }
+
+  /**
+   * Resolves the output directory based on --output and --flat options.
+   *   default:          <inputDir>/<format>/
+   *   --output <dir>:   <outputDir>/<format>/
+   *   --flat:           <outputDir ?? inputDir>/ (no format subdir)
+   */
+  resolveOutputDir(inputDir, format, options = {}) {
+    const base = options.outputDir ? path.resolve(options.outputDir) : inputDir
+    if (options.flat) return base
+    return path.join(base, format)
+  }
+
+  async writeBuffer(filePath, buffer) {
+    await fs.writeFile(filePath, buffer)
   }
 
   getBaseNameWithoutExtension(filePath) {

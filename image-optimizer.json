@@ -1,0 +1,19 @@
+{
+  "image": {
+    "concurrency": 3,
+    "formats": [
+      "webp",
+      "avif"
+    ],
+    "webpQuality": 80,
+    "avifQuality": 50,
+    "effort": 4
+  },
+  "video": {
+    "maxHeight": 1920,
+    "fps": 30,
+    "codec": "h264",
+    "removeAudio": true,
+    "preset": "medium"
+  }
+}

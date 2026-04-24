@@ -1,4 +1,4 @@
-import { ImageFormat, OptimizationResult } from './types.js'
+import { OptimizationResult } from './types.js'
 import pLimit from 'p-limit'
 
 export class ImageOptimizer {
@@ -10,145 +10,135 @@ export class ImageOptimizer {
     this.limit = pLimit(concurrency)
   }
 
-  async optimizeBatch(inputDirectory, profile) {
-    this.logger.info(`Iniciando optimización en: ${inputDirectory}`)
-    
+  /**
+   * Processes all images in a directory.
+   * @param {string} inputDirectory
+   * @param {Object} options - { formats, width?, quality?, upscale?, targetSize?,
+   *                             autoOrient?, preserveExif?, outputDir?, flat? }
+   */
+  async optimizeBatch(inputDirectory, options) {
+    this.logger.info(`Starting optimization in: ${inputDirectory}`)
+
     const imageFiles = await this.fileHandler.findImageFiles(inputDirectory)
-    
+
     if (imageFiles.length === 0) {
-      throw new Error('No se encontraron archivos de imagen (.jpg, .jpeg, .png) en el directorio especificado')
+      throw new Error('No image files (.jpg, .jpeg, .png) found in the specified directory')
     }
 
-    this.logger.info(`Encontrados ${imageFiles.length} archivos de imagen`)
+    const { formats } = options
+    this.logger.info(`Found ${imageFiles.length} image(s), generating ${imageFiles.length * formats.length} output(s)`)
 
-    const webpVariants = profile.getVariants(ImageFormat.WEBP)
-    const avifVariants = profile.getVariants(ImageFormat.AVIF)
-    
-    const totalVariants = imageFiles.length * (webpVariants.length + avifVariants.length)
-    this.logger.info(`Generando ${totalVariants} variantes totales`)
-
-    const results = {
-      webp: [],
-      avif: [],
-      errors: []
-    }
+    const results = Object.fromEntries(formats.map(f => [f, []]))
+    results.errors = []
 
     const tasks = []
-
     for (const filePath of imageFiles) {
-      for (const variant of webpVariants) {
+      for (const format of formats) {
         tasks.push(
-          this.limit(() => this.optimizeToVariant(
-            filePath, 
-            inputDirectory, 
-            ImageFormat.WEBP, 
-            variant,
-            profile
-          ))
-        )
-      }
-
-      for (const variant of avifVariants) {
-        tasks.push(
-          this.limit(() => this.optimizeToVariant(
-            filePath, 
-            inputDirectory, 
-            ImageFormat.AVIF, 
-            variant,
-            profile
-          ))
+          this.limit(() => this.optimizeFile(filePath, inputDirectory, format, options))
         )
       }
     }
 
     const allResults = await Promise.allSettled(tasks)
-    
+
     allResults.forEach((result, index) => {
       if (result.status === 'fulfilled') {
-        const optimizationResult = result.value
-        if (optimizationResult.format === ImageFormat.WEBP) {
-          results.webp.push(optimizationResult)
-        } else {
-          results.avif.push(optimizationResult)
-        }
+        const r = result.value
+        results[r.format].push(r)
       } else {
-        results.errors.push({
-          taskIndex: index,
-          error: result.reason.message || result.reason
-        })
-        this.logger.warning(`Error en tarea ${index}: ${result.reason.message}`)
+        results.errors.push({ taskIndex: index, error: result.reason.message || result.reason })
+        this.logger.warning(`Task error: ${result.reason.message}`)
       }
     })
 
     if (results.errors.length > 0) {
-      this.logger.warning(`Se completaron ${allResults.length - results.errors.length}/${allResults.length} tareas exitosamente`)
+      this.logger.warning(
+        `Completed ${allResults.length - results.errors.length}/${allResults.length} tasks successfully`
+      )
     }
 
     return results
   }
 
-  async optimizeToVariant(inputPath, baseDirectory, format, variant, profile) {
+  /**
+   * Converts a single image to a single format.
+   */
+  async optimizeFile(inputPath, baseDirectory, format, options) {
     const fileName = this.fileHandler.getFileName(inputPath)
-    const variantSuffix = variant.suffix === 'original' ? '' : `_${variant.suffix}`
-    
-    this.logger.progress(`Procesando: ${fileName} → ${format.toUpperCase()}${variantSuffix}`)
-    
+    this.logger.progress(`Processing: ${fileName} → ${format.toUpperCase()}`)
+
     try {
       const originalSize = await this.fileHandler.getFileSize(inputPath)
-      
-      const outputDirectory = this.fileHandler.createOutputPath(baseDirectory, format)
-      await this.fileHandler.ensureDirectory(outputDirectory)
-      
-      const outputPath = this.fileHandler.createVariantPath(
-        inputPath, 
-        outputDirectory, 
-        format, 
-        variant
-      )
 
-      const options = profile.getOptionsForVariant(format, variant)
-      await this.imageProcessor.optimizeWithVariant(inputPath, outputPath, format, variant, options)
-      
+      const outputDir = this.fileHandler.resolveOutputDir(baseDirectory, format, options)
+      await this.fileHandler.ensureDirectory(outputDir)
+      const outputPath = this.fileHandler.createOutputFilePath(inputPath, outputDir, format)
+
+      const sharpOptions = this._buildSharpOptions(format, options)
+
+      if (options.targetSize) {
+        const buffer = await this._binarySearchQuality(inputPath, format, options.targetSize, sharpOptions)
+        await this.fileHandler.writeBuffer(outputPath, buffer)
+      } else {
+        await this.imageProcessor.optimize(inputPath, outputPath, format, sharpOptions)
+      }
+
       const optimizedSize = await this.fileHandler.getFileSize(outputPath)
-      const dimensions = variant.width || variant.height 
-        ? { width: variant.width, height: variant.height }
-        : null
-
-      return new OptimizationResult(
-        inputPath,
-        outputPath,
-        originalSize,
-        optimizedSize,
-        format,
-        dimensions
-      )
-
+      return new OptimizationResult(inputPath, outputPath, originalSize, optimizedSize, format)
     } catch (error) {
-      throw new Error(`Error procesando ${fileName} → ${format} (${variant.suffix}): ${error.message}`)
+      throw new Error(`Error processing ${fileName} → ${format}: ${error.message}`)
     }
   }
 
-  async optimizeToFormat(inputPath, baseDirectory, format, options) {
-    const originalSize = await this.fileHandler.getFileSize(inputPath)
-    
-    const outputDirectory = this.fileHandler.createOutputPath(baseDirectory, format)
-    await this.fileHandler.ensureDirectory(outputDirectory)
-    
-    const outputPath = this.fileHandler.changeExtension(
-      this.fileHandler.moveToDirectory(inputPath, outputDirectory), 
-      format
-    )
+  // ─── Private helpers ────────────────────────────────────────────────────────
 
-    await this.imageProcessor.optimize(inputPath, outputPath, format, options)
-    
-    const optimizedSize = await this.fileHandler.getFileSize(outputPath)
-    
-    return new OptimizationResult(
-      inputPath,
-      outputPath,
-      originalSize,
-      optimizedSize,
-      format
+  _buildSharpOptions(format, options) {
+    const sharpOptions = {
+      quality: options.quality ?? (format === 'webp' ? 80 : format === 'jxl' ? 80 : 50),
+      effort: format === 'jxl' ? 7 : 4
+    }
+
+    if (options.upscale && options.upscale > 1) {
+      sharpOptions.upscale = options.upscale
+    } else if (options.width) {
+      sharpOptions.width = options.width
+      sharpOptions.fit = 'inside'
+      sharpOptions.withoutEnlargement = true
+    }
+
+    if (options.autoOrient)   sharpOptions.autoOrient = true
+    if (options.preserveExif) sharpOptions.preserveExif = true
+
+    return sharpOptions
+  }
+
+  /**
+   * Binary-searches quality (1–100) to produce output ≤ targetBytes.
+   * Encodes to Buffer in each iteration to avoid partial files on disk.
+   */
+  async _binarySearchQuality(inputPath, format, targetBytes, baseOptions) {
+    let low = 1
+    let high = 100
+    let bestBuffer = null
+
+    while (low <= high) {
+      const mid = Math.floor((low + high) / 2)
+      const buf = await this.imageProcessor.optimizeToBuffer(
+        inputPath, format, { ...baseOptions, quality: mid }
+      )
+
+      if (buf.length <= targetBytes) {
+        bestBuffer = buf
+        low = mid + 1  // fits — try higher quality
+      } else {
+        high = mid - 1 // too large — reduce quality
+      }
+    }
+
+    // If even quality 1 exceeded the target, return it anyway
+    return bestBuffer ?? await this.imageProcessor.optimizeToBuffer(
+      inputPath, format, { ...baseOptions, quality: 1 }
     )
   }
 }

@@ -1,264 +1,362 @@
-# 🖼️ Image Optimizer
+# Image & Video Optimizer
 
-Optimizador de imágenes parametrizable con perfiles especializados que convierte imágenes JPEG/PNG a formatos modernos WebP y AVIF, con soporte para redimensionado automático y generación de variantes específicas por caso de uso.
+Conversor de imágenes y videos a formatos modernos con control total de calidad. Convierte JPEG/PNG a WebP, AVIF y JPEG XL, y videos a WebM/MP4, con soporte para upscaling, target de tamaño de archivo, modo watch, control EXIF y generación automática de snippets HTML.
 
-## ✨ Características
-
-- 🔄 **Conversión moderna**: JPEG/PNG → WebP + AVIF
-- 📐 **Redimensionado inteligente**: Múltiples variantes por imagen
-- 🎯 **Perfiles especializados**: Optimizados para diferentes casos de uso
-- ⚡ **Concurrencia controlada**: Procesamiento eficiente con p-limit
-- 📊 **Reportes detallados**: Ahorro de espacio por variante y formato
-- 🛠️ **CLI intuitivo**: Fácil de usar con múltiples opciones
-- 🔧 **Manejo robusto de errores**: Continúa el proceso aunque fallen algunas imágenes
-- 🎨 **Fit modes inteligentes**: inside/cover/contain según el caso de uso
-
-## 🚀 Instalación
+## Instalación
 
 ```bash
 npm install
 ```
 
-## 📖 Uso
+Para procesar videos, FFmpeg debe estar instalado en el sistema:
 
-### Comando básico
 ```bash
-node src/cli/index.js ./ruta/a/imagenes
+# Ubuntu/Debian
+sudo apt-get install ffmpeg
+
+# macOS
+brew install ffmpeg
+
+# Windows — descarga desde https://ffmpeg.org/download.html
 ```
 
-### Con perfil especializado
+## Uso rápido
+
 ```bash
-node src/cli/index.js ./ruta/a/imagenes --profile product
+# Conversión básica: genera webp/ y avif/ en el mismo directorio
+node src/cli/index.js ./imagenes
+
+# Especificar formato de salida
+node src/cli/index.js ./imagenes --format webp
+node src/cli/index.js ./imagenes --format avif
+node src/cli/index.js ./imagenes --format webp,avif,jxl
+
+# Reducir ancho máximo a 1200px (mantiene proporción, nunca agranda)
+node src/cli/index.js ./imagenes --width 1200
+
+# Agrandar imágenes 2x con kernel Lanczos3
+node src/cli/index.js ./imagenes --upscale 2
+
+# Forzar tamaño máximo de archivo (búsqueda binaria en calidad)
+node src/cli/index.js ./imagenes --target-size 150kb
+node src/cli/index.js ./imagenes --target-size 1.5mb
+
+# Procesar videos también
+node src/cli/index.js ./media --video
+node src/cli/index.js ./media --video --codec h264
+
+# Ver qué se procesaría sin escribir nada
+node src/cli/index.js ./imagenes --dry-run
 ```
 
-### Control de concurrencia
-```bash
-node src/cli/index.js ./ruta/a/imagenes --profile banner --concurrency 2
+## Todas las opciones
+
+```
+Arguments:
+  <directory>                   Directorio con archivos a optimizar
+
+Formato y calidad:
+  -f, --format <formats>        Formatos de salida: webp, avif, jxl, o separados
+                                por comas (default: webp,avif)
+  -q, --quality <number>        Calidad 1-100 (defaults: webp=80, avif=50, jxl=80)
+
+Geometría:
+  -w, --width <pixels>          Ancho máximo en píxeles, mantiene proporción
+                                (solo reduce, nunca agranda)
+  --upscale <factor>            Ampliar por factor usando Lanczos3 (ej: 2, 3, 4)
+                                No compatible con --width
+
+Metadatos EXIF:
+  --preserve-exif               Conservar metadatos EXIF/ICC en los archivos de salida
+  --auto-orient                 Rotar según orientación EXIF antes de convertir
+
+Target de tamaño:
+  --target-size <size>          Tamaño máximo por archivo (ej: 150kb, 1.5mb, 500)
+                                Hace búsqueda binaria en calidad. Anula --quality
+
+Directorio de salida:
+  -o, --output <dir>            Directorio de salida personalizado (default: subdirs
+                                dentro del directorio de entrada)
+  --flat                        Escribir archivos junto a los originales, sin subdirs
+                                por formato
+
+Video:
+  --video                       Activar procesamiento de videos (requiere FFmpeg)
+  --codec <name>                Codec de video: h264, vp9, av1 (default: vp9)
+
+Flujo:
+  --watch                       Modo watch: procesa archivos existentes y luego
+                                monitorea el directorio para nuevos archivos
+  --srcset                      Genera srcset.html con etiquetas <picture> listas
+                                para usar tras el procesamiento
+
+General:
+  -c, --concurrency <number>    Tareas concurrentes 1-10 (default: 3)
+  -v, --verbose                 Mostrar información detallada
+  --dry-run                     Previsualizar sin escribir archivos
+  --config <path>               Ruta a archivo de configuración JSON
+
+Comandos:
+  init-config                   Genera un archivo de configuración de ejemplo
 ```
 
-### Modo verbose con detalles
+## Ejemplos por caso de uso
+
+### Conversión simple de un directorio
+
 ```bash
-node src/cli/index.js ./ruta/a/imagenes --profile thumbnail --verbose
+# WebP + AVIF con calidad por defecto
+node src/cli/index.js ./fotos
+
+# Solo WebP con calidad alta
+node src/cli/index.js ./fotos --format webp --quality 90
 ```
 
-### Simulación (dry-run)
+### Preparar imágenes para web responsive
+
 ```bash
-node src/cli/index.js ./ruta/a/imagenes --profile logo --dry-run
+# Convertir sin redimensionar — el navegador elige el formato
+node src/cli/index.js ./imagenes
+
+# Redimensionar a 1200px max y convertir
+node src/cli/index.js ./imagenes --width 1200
+
+# Generar snippets HTML <picture> listos para pegar
+node src/cli/index.js ./imagenes --srcset
 ```
 
-### Ver perfiles disponibles
+### Control estricto de tamaño de archivo
+
 ```bash
-node src/cli/index.js profiles
+# Cada imagen de salida pesa como máximo 100kb
+node src/cli/index.js ./fotos --target-size 100kb --format webp
+
+# Útil para galerías con restricciones de CDN
+node src/cli/index.js ./galeria --target-size 200kb --format webp,avif
 ```
 
-## 📋 Perfiles Disponibles
+### Restaurar o mejorar imágenes pequeñas
 
-### 🎯 Perfiles Especializados
+```bash
+# Duplicar resolución con Lanczos3
+node src/cli/index.js ./thumbs --upscale 2
 
-#### **`thumbnail`** - Miniaturas para Listados
-- **Variantes**: 150px, 300px
-- **Fit mode**: `inside` (mantiene proporciones)
-- **Uso**: Listados de productos, grids, previews
+# Triplicar y convertir a AVIF
+node src/cli/index.js ./thumbs --upscale 3 --format avif
+```
 
-#### **`product`** - Catálogos de Productos  
-- **Variantes**: 800px, 1200px, 1600px
-- **Fit mode**: `inside` (mantiene proporciones)
-- **Uso**: Páginas de producto, galerías, zoom
+### Preservar metadatos para fotografía
 
-#### **`banner`** - Banners y Fondos Hero
-- **Variantes**: 1280px, 1920px, 2560px  
-- **Fit mode**: `cover` (llena el área completamente)
-- **Uso**: Headers, fondos de sección, héroes
+```bash
+# Mantener EXIF (cámara, GPS, fecha) en los archivos convertidos
+node src/cli/index.js ./fotos --preserve-exif
 
-#### **`logo`** - Logos y Gráficos
-- **Variantes**: 100px, 200px, 400px
-- **Fit mode**: `contain` (mantiene logo completo)
-- **Compresión**: Lossless para máxima nitidez
-- **Uso**: Logos, iconos, gráficos vectoriales rasterizados
+# Corregir orientación según EXIF y descartar el resto
+node src/cli/index.js ./fotos --auto-orient
+```
 
-### 🎯 Perfiles Básicos
+### Directorio de salida personalizado
 
-- **`default`**: Calidad equilibrada (800px)
-- **`balanced`**: Optimización balanceada (800px)  
-- **`aggressive`**: Máxima compresión (600px)
-- **`high-quality`**: Alta calidad (1200px)
+```bash
+# Salida en dist/ manteniendo subdirs por formato: dist/webp/, dist/avif/
+node src/cli/index.js ./imagenes --output ./dist
 
-## 📁 Estructura de Output
+# Salida plana en dist/ sin subdirs
+node src/cli/index.js ./imagenes --output ./dist --flat
+
+# Archivos junto a los originales (misma carpeta, extensión diferente)
+node src/cli/index.js ./imagenes --flat
+```
+
+### Procesamiento de videos
+
+```bash
+# VP9 → WebM (default)
+node src/cli/index.js ./videos --video
+
+# H264 → MP4 (máxima compatibilidad)
+node src/cli/index.js ./videos --video --codec h264
+
+# AV1 → WebM (mejor compresión, encoding más lento)
+node src/cli/index.js ./videos --video --codec av1
+
+# Imágenes y videos juntos
+node src/cli/index.js ./media --video --format webp,avif
+```
+
+### Modo watch para flujos de trabajo continuos
+
+```bash
+# Procesar archivos existentes y quedarse monitoreando
+node src/cli/index.js ./imagenes --watch
+
+# Watch con todas las opciones activas
+node src/cli/index.js ./imagenes --watch --format webp --width 1200 --srcset
+```
+
+### Configuración avanzada con opciones combinadas
+
+```bash
+# Pipeline completo para producción
+node src/cli/index.js ./media \
+  --format webp,avif \
+  --width 1600 \
+  --quality 82 \
+  --output ./dist \
+  --video --codec h264 \
+  --srcset \
+  --concurrency 6 \
+  --verbose
+```
+
+## Estructura de salida
+
+Por defecto se crea un subdirectorio por formato dentro del directorio de entrada:
 
 ```
 tu-directorio/
-├── imagen1.jpg
-├── imagen2.png
+├── foto1.jpg
+├── foto2.png
 ├── webp/
-│   ├── imagen1.webp          (original)
-│   ├── imagen1_800w.webp     (variante)
-│   ├── imagen1_1200w.webp    (variante)
-│   ├── imagen1_1600w.webp    (variante)
-│   ├── imagen2.webp
-│   ├── imagen2_800w.webp
-│   └── imagen2_1200w.webp
+│   ├── foto1.webp
+│   └── foto2.webp
 └── avif/
-    ├── imagen1.avif
-    ├── imagen1_800w.avif
-    ├── imagen1_1200w.avif
-    ├── imagen1_1600w.avif
-    ├── imagen2.avif
-    ├── imagen2_800w.avif
-    └── imagen2_1200w.avif
+    ├── foto1.avif
+    └── foto2.avif
 ```
 
-## 🏗️ Arquitectura
+Con `--flat` los archivos se escriben junto a los originales:
 
-El proyecto sigue una **mini Clean Architecture**:
+```
+tu-directorio/
+├── foto1.jpg
+├── foto1.webp
+├── foto1.avif
+├── foto2.png
+├── foto2.webp
+└── foto2.avif
+```
 
-- `src/core/` - Lógica de negocio pura
-  - `optimizer.js` - Orquestador principal con concurrencia
-  - `types.js` - Tipos, variantes y perfiles
-  - `profiles.js` - Perfiles especializados predefinidos
-- `src/infrastructure/` - Adaptadores externos
-  - `image-processor.js` - Sharp con clonado y fit modes
-  - `file-handler.js` - Sistema de archivos con naming inteligente
-  - `logger.js` - Logging colorido con detalles de variantes
-- `src/cli/` - Interfaz de línea de comandos
-  - `index.js` - Commander.js con opciones avanzadas
+Con `--srcset` se añade `srcset.html` al directorio de salida:
 
-## 🔧 Opciones de CLI
+```html
+<!-- foto1.jpg -->
+<picture>
+  <source srcset="avif/foto1.avif" type="image/avif">
+  <source srcset="webp/foto1.webp" type="image/webp">
+  <img src="foto1.jpg" alt="" loading="lazy" decoding="async">
+</picture>
+```
+
+## Archivo de configuración
+
+Genera una plantilla con `node src/cli/index.js init-config`, que crea `image-optimizer.json`:
+
+```json
+{
+  "image": {
+    "concurrency": 3,
+    "formats": ["webp", "avif"],
+    "webpQuality": 80,
+    "avifQuality": 50,
+    "effort": 4
+  },
+  "video": {
+    "maxHeight": 720,
+    "fps": 24,
+    "codec": "vp9",
+    "removeAudio": true,
+    "preset": "medium"
+  }
+}
+```
+
+El archivo se busca automáticamente como `image-optimizer.json`, `.image-optimizer.json` o `image-optimizer.config.json` en el directorio de entrada. Las opciones del CLI siempre tienen prioridad sobre el archivo de configuración.
+
+### Opciones de imagen
+
+| Opción | Tipo | Descripción |
+|--------|------|-------------|
+| `concurrency` | número (1-10) | Tareas paralelas |
+| `formats` | array | Formatos de salida: `webp`, `avif`, `jxl` |
+| `webpQuality` | número (1-100) | Calidad por defecto para WebP |
+| `avifQuality` | número (1-100) | Calidad por defecto para AVIF |
+| `effort` | número | Esfuerzo de compresión (WebP: 0-6, AVIF: 0-9, JXL: 3-9) |
+
+### Opciones de video
+
+| Opción | Tipo | Descripción |
+|--------|------|-------------|
+| `maxHeight` | número (144-4320) | Altura máxima en píxeles |
+| `fps` | número (1-120) | Frames por segundo de salida |
+| `codec` | string | `vp9`, `av1`, `h264` |
+| `removeAudio` | boolean | Eliminar la pista de audio |
+| `preset` | string | Velocidad de encoding: `ultrafast` → `veryslow` |
+
+## Calidades de referencia por formato
+
+| Formato | Calidad por defecto | Rango recomendado | Notas |
+|---------|--------------------|--------------------|-------|
+| WebP | 80 | 75-90 | Excelente soporte en todos los navegadores modernos |
+| AVIF | 50 | 40-65 | Mejor compresión que WebP. Calidad 50 ≈ WebP 80 visualmente |
+| JXL | 80 | 70-90 | Requiere libvips con soporte JXL compilado |
+
+## CRF de video por codec
+
+| Codec | CRF por defecto | Rango recomendado | Contenedor |
+|-------|----------------|-------------------|------------|
+| VP9 | 31 | 28-36 | WebM |
+| H264 | 23 | 18-28 | MP4 |
+| AV1 | 35 | 28-40 | WebM |
+
+CRF más bajo = mayor calidad y mayor tamaño de archivo.
+
+## Arquitectura
+
+```
+src/
+├── cli/
+│   └── index.js              Interfaz CLI (Commander.js)
+├── core/
+│   ├── optimizer.js          Orquestador de imágenes con p-limit
+│   ├── video-optimizer.js    Orquestador de videos
+│   ├── srcset-generator.js   Generador de snippets HTML <picture>
+│   ├── types.js              ImageFormat, OptimizationResult
+│   └── video-types.js        VideoCodec, VideoOptimizationProfile
+├── infrastructure/
+│   ├── image-processor.js    Wrapper de Sharp (resize, upscale, EXIF, formatos)
+│   ├── video-processor.js    Wrapper de FFmpeg via child_process.spawn()
+│   ├── file-handler.js       Operaciones de sistema de archivos
+│   ├── logger.js             Salida en consola con chalk/ora
+│   └── config-loader.js      Carga y validación de configuración JSON
+└── utils/
+    └── parse-size.js         Parser de tamaños (150kb, 1.5mb...)
+```
+
+El proyecto sigue una mini Clean Architecture: el CLI delega en los orquestadores del core, que usan los adaptadores de infraestructura. El procesador de imagen y el procesador de video son intercambiables.
+
+## Tests
 
 ```bash
-Arguments:
-  directory                   Directorio con imágenes (JPEG/PNG) a optimizar
+# Ejecutar todos los tests
+npm test
 
-Options:
-  -p, --profile <name>        Perfil de optimización (default: "default")
-  -c, --concurrency <number>  Número de tareas concurrentes 1-6 (default: "3")
-  -v, --verbose               Mostrar información detallada
-  --dry-run                   Simular sin procesar archivos
-  -h, --help                  Mostrar ayuda
+# Modo watch durante desarrollo
+npm run test:watch
+
+# Con reporte de cobertura
+npm run test:coverage
 ```
 
-## 🧪 Ejemplos de Uso por Caso
+120 tests en total: 99 unitarios + 21 de integración con Sharp real sobre directorios temporales. Los tests de JXL se saltan automáticamente si la instalación de libvips no tiene soporte JXL compilado.
 
-### E-commerce
-```bash
-# Thumbnails para listados
-node src/cli/index.js ./productos --profile thumbnail --verbose
+## Tecnologías
 
-# Imágenes de producto completas
-node src/cli/index.js ./productos --profile product --concurrency 4
-
-# Banners promocionales
-node src/cli/index.js ./banners --profile banner --concurrency 2
-```
-
-### Blog/CMS
-```bash
-# Contenido general
-node src/cli/index.js ./articulos --profile default --verbose
-
-# Imágenes destacadas
-node src/cli/index.js ./destacadas --profile banner
-```
-
-### Branding
-```bash
-# Logos (lossless)
-node src/cli/index.js ./logos --profile logo --verbose
-```
-
-## 📊 Ejemplo de Output
-
-```
-📊 Resumen de Optimización
-
-WEBP:
-  Variantes: 9
-  Tamaño original: 4.2 MB
-  Tamaño optimizado: 1.8 MB
-  Ahorro: 57.1%
-    800w: 3 archivos, 680.45 KB ahorrados (58.2%)
-    1200w: 3 archivos, 520.12 KB ahorrados (56.8%)
-    1600w: 3 archivos, 790.67 KB ahorrados (56.4%)
-
-AVIF:
-  Variantes: 9
-  Tamaño original: 4.2 MB
-  Tamaño optimizado: 1.2 MB
-  Ahorro: 71.4%
-    800w: 3 archivos, 890.23 KB ahorrados (72.1%)
-    1200w: 3 archivos, 720.45 KB ahorrados (71.2%)
-    1600w: 3 archivos, 1.1 MB ahorrados (70.9%)
-
-📈 RESUMEN TOTAL:
-  Variantes generadas: 18
-  Tamaño original: 8.4 MB
-  Tamaño optimizado: 3.0 MB
-  Ahorro total: 5.4 MB (64.3%)
-```
-
-## 📦 Tecnologías
-
-- **Node.js** - Runtime (>= 18.0.0)
-- **Sharp** - Procesamiento de imágenes con optimizaciones de memoria
-- **Commander.js** - CLI framework con subcomandos
-- **p-limit** - Control de concurrencia inteligente
-- **Chalk** - Colores en terminal
-- **Ora** - Indicadores de progreso
-
-## ⚡ Optimizaciones Implementadas
-
-### Rendimiento
-- **Sharp.clone()**: Evita reabrir archivos para cada variante
-- **p-limit**: Control de concurrencia inteligente (1-6 tareas)
-- **sharp.cache(false)**: Previene acumulación de memoria en batch grandes
-- **SIMD habilitado**: Utiliza instrucciones vectoriales del CPU
-
-### Calidad
-- **Fit modes específicos**: inside/cover/contain según el caso de uso
-- **Quality tuning**: Ajustado por formato y caso de uso específico
-- **Lossless para gráficos**: Preserva nitidez en logos e iconos
-- **Effort optimization**: Balanceado por velocidad vs compresión
-
-### Robustez
-- **Promise.allSettled**: Error handling que no detiene todo el proceso
-- **Suffix naming**: Nomenclatura clara para responsive design
-- **Batch resiliente**: Continúa procesando aunque fallen imágenes individuales
-
-## 🎯 Casos de Uso Recomendados
-
-### Thumbnail Profile
-✅ **Ideal para**: Listados de productos, grids, previews, carruseles  
-✅ **Características**: Tamaños pequeños, carga rápida, responsive  
-✅ **Formatos**: Ambos JPEG/PNG → WebP/AVIF  
-
-### Product Profile  
-✅ **Ideal para**: Páginas de producto, galerías, lightbox, zoom  
-✅ **Características**: Balance calidad/peso, múltiples resoluciones  
-✅ **Formatos**: Ambos JPEG/PNG → WebP/AVIF  
-
-### Banner Profile
-✅ **Ideal para**: Headers, héroes, fondos de sección, promocionales  
-✅ **Características**: Cover completo, alta resolución, optimizado peso  
-✅ **Formatos**: Principalmente JPEG → WebP/AVIF  
-
-### Logo Profile
-✅ **Ideal para**: Logos, iconos, gráficos simples  
-✅ **Características**: Lossless, máxima nitidez, tamaños precisos  
-✅ **Formatos**: Principalmente PNG → WebP/AVIF (lossless)  
-
-## 🚀 Extensibilidad
-
-El diseño modular permite:
-
-- ✅ Agregar nuevos perfiles especializados
-- ✅ Crear fit modes personalizados  
-- ✅ Integrar nuevos formatos de salida
-- ✅ Extender el CLI con más comandos
-- ✅ Implementar backends de almacenamiento (S3, CDN)
-
-## 📝 Notas Importantes
-
-- **Fit modes** están optimizados por caso de uso (inside/cover/contain)  
-- **Lossless mode** se usa solo para logos/gráficos donde la nitidez es crítica
-- **PNG transparency** se preserva correctamente en WebP/AVIF
-- **Concurrencia** recomendada: 2-4 para mejores resultados CPU/memoria
-- **Quality settings** han sido tuneados específicamente por perfil y formato
+- **Node.js** ≥ 18.0.0 — ES modules
+- **Sharp** — Procesamiento de imagen con SIMD y cache desactivado para batches grandes
+- **FFmpeg** (externo) — Procesamiento de video vía `child_process.spawn()`
+- **Commander.js** — CLI framework
+- **p-limit** — Control de concurrencia
+- **chokidar** — Watch de sistema de archivos
+- **Chalk + Ora** — Salida colorida y spinners
+- **Vitest** — Tests unitarios e integración

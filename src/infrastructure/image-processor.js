@@ -8,110 +8,32 @@ export class SharpImageProcessor {
     sharp.concurrency(1)
   }
 
+  /**
+   * Converts an image to the target format and writes to disk.
+   * Supports optional resize, upscale, EXIF control.
+   */
   async optimize(inputPath, outputPath, format, options) {
     try {
-      const pipeline = sharp(inputPath)
-      
-      switch (format) {
-        case ImageFormat.WEBP:
-          await pipeline.webp(options).toFile(outputPath)
-          break
-          
-        case ImageFormat.AVIF:
-          await pipeline.avif(options).toFile(outputPath)
-          break
-          
-        default:
-          throw new Error(`Formato no soportado: ${format}`)
-      }
-    } catch (error) {
-      throw new Error(`Error procesando ${inputPath} a ${format}: ${error.message}`)
-    }
-  }
-
-  async optimizeWithVariant(inputPath, outputPath, format, variant, options) {
-    try {
-      const basePipeline = sharp(inputPath)
-      
-      const resizeOptions = this._buildResizeOptions(variant, options)
-      let pipeline = basePipeline.clone()
-
-      if (resizeOptions) {
-        pipeline = pipeline.resize(resizeOptions)
-      }
-
+      const pipeline = await this._buildPipeline(inputPath, options)
       const formatOptions = this._buildFormatOptions(format, options)
-      
-      switch (format) {
-        case ImageFormat.WEBP:
-          await pipeline.webp(formatOptions).toFile(outputPath)
-          break
-          
-        case ImageFormat.AVIF:
-          await pipeline.avif(formatOptions).toFile(outputPath)
-          break
-          
-        default:
-          throw new Error(`Formato no soportado: ${format}`)
-      }
+      await this._applyFormat(pipeline, format, formatOptions).toFile(outputPath)
     } catch (error) {
-      throw new Error(`Error procesando ${inputPath} a ${format} (${variant.suffix}): ${error.message}`)
+      throw new Error(`Error processing ${inputPath} to ${format}: ${error.message}`)
     }
   }
 
-  _buildResizeOptions(variant, options) {
-    if (!variant.width && !variant.height) {
-      return null
+  /**
+   * Encodes to a Buffer instead of writing to disk.
+   * Used by the binary-search target-size optimizer.
+   */
+  async optimizeToBuffer(inputPath, format, options) {
+    try {
+      const pipeline = await this._buildPipeline(inputPath, options)
+      const formatOptions = this._buildFormatOptions(format, options)
+      return this._applyFormat(pipeline, format, formatOptions).toBuffer()
+    } catch (error) {
+      throw new Error(`Error encoding ${inputPath} to ${format} buffer: ${error.message}`)
     }
-
-    const resizeOptions = {
-      fit: options.resize?.fit || 'inside',
-      withoutEnlargement: options.resize?.withoutEnlargement !== false
-    }
-
-    if (variant.width) {
-      resizeOptions.width = variant.width
-    }
-    
-    if (variant.height) {
-      resizeOptions.height = variant.height
-    }
-
-    if (options.resize?.position) {
-      resizeOptions.position = options.resize.position
-    }
-
-    return resizeOptions
-  }
-
-  _buildFormatOptions(format, options) {
-    const formatOptions = { ...options }
-
-    delete formatOptions.width
-    delete formatOptions.height
-    delete formatOptions.resize
-
-    if (format === ImageFormat.WEBP) {
-      return {
-        quality: formatOptions.quality || 80,
-        effort: formatOptions.effort || 4,
-        lossless: formatOptions.lossless || false,
-        nearLossless: formatOptions.nearLossless || false,
-        smartSubsample: formatOptions.smartSubsample !== false,
-        ...formatOptions
-      }
-    }
-
-    if (format === ImageFormat.AVIF) {
-      return {
-        quality: formatOptions.quality || 65,
-        effort: formatOptions.effort || 4,
-        lossless: formatOptions.lossless || false,
-        ...formatOptions
-      }
-    }
-
-    return formatOptions
   }
 
   async getImageInfo(imagePath) {
@@ -129,32 +51,104 @@ export class SharpImageProcessor {
         hasAlpha: metadata.hasAlpha
       }
     } catch (error) {
-      throw new Error(`Error obteniendo información de ${imagePath}: ${error.message}`)
+      throw new Error(`Error getting info for ${imagePath}: ${error.message}`)
     }
   }
 
-  async createThumbnail(inputPath, outputPath, width, height = null, options = {}) {
-    try {
-      const resizeOptions = {
-        width,
-        height,
-        fit: options.fit || 'cover',
-        position: options.position || 'center',
-        withoutEnlargement: options.withoutEnlargement !== false
+  // ─── Private helpers ────────────────────────────────────────────────────────
+
+  /**
+   * Builds a Sharp pipeline with all geometric transforms applied.
+   * Order: orient → upscale/resize → (format applied later)
+   */
+  async _buildPipeline(inputPath, options) {
+    const pipeline = sharp(inputPath)
+
+    // Auto-orient from EXIF before any resize
+    if (options.autoOrient) {
+      pipeline.rotate()
+    }
+
+    // Preserve EXIF/ICC metadata in output
+    if (options.preserveExif) {
+      pipeline.keepMetadata()
+    }
+
+    if (options.upscale && options.upscale > 1) {
+      // AI-quality Lanczos3 upscaling — reads metadata to compute target dims
+      const meta = await sharp(inputPath).metadata()
+      pipeline.resize({
+        width: Math.round(meta.width * options.upscale),
+        height: Math.round(meta.height * options.upscale),
+        kernel: sharp.kernel.lanczos3,
+        withoutEnlargement: false
+      })
+    } else if (options.width) {
+      pipeline.resize({
+        width: options.width,
+        fit: options.fit ?? 'inside',
+        withoutEnlargement: true
+      })
+    }
+
+    return pipeline
+  }
+
+  /**
+   * Applies the output format to a pipeline and returns the result pipeline.
+   * Does not execute — caller must chain .toFile() or .toBuffer().
+   */
+  _applyFormat(pipeline, format, formatOptions) {
+    switch (format) {
+      case ImageFormat.WEBP: return pipeline.webp(formatOptions)
+      case ImageFormat.AVIF: return pipeline.avif(formatOptions)
+      case ImageFormat.JXL:  return pipeline.jxl(formatOptions)
+      default: throw new Error(`Unsupported format: ${format}`)
+    }
+  }
+
+  /**
+   * Builds format-specific options from the shared options object.
+   * Strips geometry keys so they don't leak into the Sharp format call.
+   */
+  _buildFormatOptions(format, options) {
+    const opts = { ...options }
+
+    // Remove geometry and pipeline control keys
+    for (const key of ['width', 'height', 'fit', 'withoutEnlargement', 'resize',
+                        'upscale', 'autoOrient', 'preserveExif', 'targetSize']) {
+      delete opts[key]
+    }
+
+    if (format === ImageFormat.WEBP) {
+      return {
+        quality: opts.quality || 80,
+        effort: opts.effort || 4,
+        lossless: opts.lossless || false,
+        nearLossless: opts.nearLossless || false,
+        smartSubsample: opts.smartSubsample !== false,
+        ...opts
       }
-
-      await sharp(inputPath)
-        .resize(resizeOptions)
-        .jpeg({ quality: options.quality || 85 })
-        .toFile(outputPath)
-
-    } catch (error) {
-      throw new Error(`Error creando thumbnail ${inputPath}: ${error.message}`)
     }
-  }
 
-  static getOptimalConcurrency() {
-    const cpus = require('os').cpus().length
-    return Math.max(1, Math.min(cpus - 1, 3))
+    if (format === ImageFormat.AVIF) {
+      return {
+        quality: opts.quality || 50,
+        effort: opts.effort || 4,
+        lossless: opts.lossless || false,
+        ...opts
+      }
+    }
+
+    if (format === ImageFormat.JXL) {
+      return {
+        quality: opts.quality || 80,
+        effort: opts.effort || 7,   // JXL effort: 3–9, higher = better compression
+        lossless: opts.lossless || false,
+        ...opts
+      }
+    }
+
+    return opts
   }
 }

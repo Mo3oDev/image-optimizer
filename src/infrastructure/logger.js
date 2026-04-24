@@ -43,76 +43,91 @@ export class ConsoleLogger {
 
   printSummary(results, fileHandler) {
     this.stopSpinner()
-    
-    console.log(chalk.bold('\n📊 Resumen de Optimización\n'))
-    
+
+    console.log(chalk.bold('\nOptimization Summary\n'))
+
     if (results.errors && results.errors.length > 0) {
-      console.log(chalk.yellow(`⚠ ${results.errors.length} errores encontrados durante el procesamiento`))
+      console.log(chalk.yellow(`  ${results.errors.length} error(s) during processing`))
       console.log()
     }
-    
+
     const formats = Object.keys(results).filter(key => key !== 'errors')
     let totalOriginal = 0
     let totalOptimized = 0
-    let totalVariants = 0
-    
-    formats.forEach(format => {
-      const formatResults = results[format]
-      if (formatResults.length === 0) return
-      
-      const formatOriginal = formatResults.reduce((sum, r) => sum + r.originalSize, 0)
-      const formatOptimized = formatResults.reduce((sum, r) => sum + r.optimizedSize, 0)
-      const formatSavings = ((formatOriginal - formatOptimized) / formatOriginal) * 100
-      
-      console.log(chalk.cyan(`${format.toUpperCase()}:`))
-      console.log(`  Variantes: ${formatResults.length}`)
-      console.log(`  Tamaño original: ${fileHandler.formatBytes(formatOriginal)}`)
-      console.log(`  Tamaño optimizado: ${fileHandler.formatBytes(formatOptimized)}`)
-      console.log(`  Ahorro: ${chalk.green(`${formatSavings.toFixed(1)}%`)}`)
-      
-      const variantGroups = this._groupByVariant(formatResults)
-      Object.entries(variantGroups).forEach(([variant, files]) => {
-        const variantSavings = files.reduce((sum, f) => sum + f.savings, 0)
-        const avgSavingsPercent = files.reduce((sum, f) => sum + f.savingsPercentage, 0) / files.length
-        console.log(`    ${variant}: ${files.length} archivos, ${fileHandler.formatBytes(variantSavings)} ahorrados (${avgSavingsPercent.toFixed(1)}%)`)
-      })
-      console.log()
-      
-      totalOriginal += formatOriginal
-      totalOptimized += formatOptimized
-      totalVariants += formatResults.length
-    })
-    
-    if (totalOriginal > 0) {
-      const totalSavings = ((totalOriginal - totalOptimized) / totalOriginal) * 100
-      
-      console.log(chalk.bold.green('📈 RESUMEN TOTAL:'))
-      console.log(chalk.bold(`  Variantes generadas: ${totalVariants}`))
-      console.log(chalk.bold(`  Tamaño original: ${fileHandler.formatBytes(totalOriginal)}`))
-      console.log(chalk.bold(`  Tamaño optimizado: ${fileHandler.formatBytes(totalOptimized)}`))
-      console.log(chalk.bold.green(`  Ahorro total: ${fileHandler.formatBytes(totalOriginal - totalOptimized)} (${totalSavings.toFixed(1)}%)`))
-    }
-  }
+    let totalFiles = 0
 
-  _groupByVariant(results) {
-    return results.reduce((groups, result) => {
-      const variant = result.variant || 'original'
-      if (!groups[variant]) {
-        groups[variant] = []
-      }
-      groups[variant].push(result)
-      return groups
-    }, {})
+    formats.forEach(format => {
+      const items = results[format]
+      if (!items.length) return
+
+      const orig = items.reduce((sum, r) => sum + r.originalSize, 0)
+      const opt = items.reduce((sum, r) => sum + r.optimizedSize, 0)
+      const pct = orig > 0 ? ((orig - opt) / orig * 100).toFixed(1) : '0.0'
+
+      console.log(chalk.cyan(`${format.toUpperCase()}:`))
+      console.log(`  Files:    ${items.length}`)
+      console.log(`  Original: ${fileHandler.formatBytes(orig)}`)
+      console.log(`  Output:   ${fileHandler.formatBytes(opt)}`)
+      console.log(`  Saved:    ${chalk.green(pct + '%')}`)
+      console.log()
+
+      totalOriginal += orig
+      totalOptimized += opt
+      totalFiles += items.length
+    })
+
+    if (totalOriginal > 0) {
+      const totalPct = ((totalOriginal - totalOptimized) / totalOriginal * 100).toFixed(1)
+      console.log(chalk.bold.green('TOTAL:'))
+      console.log(chalk.bold(`  Files processed: ${totalFiles}`))
+      console.log(chalk.bold(`  Saved: ${fileHandler.formatBytes(totalOriginal - totalOptimized)} (${totalPct}%)`))
+    }
   }
 
   printDetailedSummary(results, fileHandler, verbose = false) {
     this.printSummary(results, fileHandler)
-    
+
     if (verbose && results.errors && results.errors.length > 0) {
       console.log(chalk.red('\n❌ Errores detallados:'))
       results.errors.forEach((error, index) => {
         console.log(chalk.red(`  ${index + 1}. ${error.error}`))
       })
     }
+  }
+
+  printVideoSummary(results, fileHandler) {
+    this.stopSpinner()
+
+    console.log(chalk.bold('\n🎬 Resumen de Optimización de Videos\n'))
+
+    if (results.errors && results.errors.length > 0) {
+      console.log(chalk.yellow(`⚠ ${results.errors.length} errores encontrados durante el procesamiento`))
+      console.log()
+    }
+
+    if (results.videos.length === 0) {
+      console.log('No se procesaron videos')
+      return
+    }
+
+    const totalOriginal = results.videos.reduce((sum, r) => sum + r.originalSize, 0)
+    const totalOptimized = results.videos.reduce((sum, r) => sum + r.optimizedSize, 0)
+    const totalSavings = ((totalOriginal - totalOptimized) / totalOriginal) * 100
+
+    console.log(chalk.cyan('VIDEOS:'))
+    console.log(`  Archivos procesados: ${results.videos.length}`)
+    console.log(`  Tamaño original: ${fileHandler.formatBytes(totalOriginal)}`)
+    console.log(`  Tamaño optimizado: ${fileHandler.formatBytes(totalOptimized)}`)
+    console.log(`  Ahorro: ${chalk.green(`${totalSavings.toFixed(1)}%`)}`)
+
+    if (results.videos.length > 0) {
+      console.log('\n  Detalles por archivo:')
+      results.videos.forEach(video => {
+        const fileName = fileHandler.getFileName(video.inputPath)
+        console.log(`    • ${fileName}: ${fileHandler.formatBytes(video.savings)} ahorrados (${video.savingsPercentage.toFixed(1)}%)`)
+      })
+    }
+
+    console.log()
   }
 }
